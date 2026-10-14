@@ -1,0 +1,22 @@
+import { NextResponse } from 'next/server';
+import { getActiveSession } from '@/lib/auth';
+import prisma from '@/lib/prisma';
+
+export async function POST() {
+  try {
+    const session = await getActiveSession();
+    if (!session) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    await prisma.notification.updateMany({
+      where: { userId: session.user.id, read: false },
+      data: { read: true },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Mark read error:', error);
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
+  }
+}
