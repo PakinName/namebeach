@@ -7,6 +7,7 @@ import Link from 'next/link';
 import Icon from '@/components/ui/Icon';
 
 interface Quiz {
+  revision:string;
   id: string;
   title: string;
   description: string | null;
@@ -20,10 +21,11 @@ interface Quiz {
     points: number;
     options: Array<{ id: string; optionText: string }>;
   }>;
-  attempts: Array<{ id: string; percentage: number; passed: boolean; startedAt: string }>;
+  attempts: Array<{ id: string; percentage: number; passed: boolean; status:string;answers:{id:string;textAnswer:string|null;awardedPoints:number|null;feedback:string|null;question:{questionText:string;points:number}}[]; startedAt: string }>;
 }
 
 interface QuizResult {
+  pending?:boolean;
   score: number;
   totalPoints: number;
   percentage: number;
@@ -90,9 +92,10 @@ export default function QuizPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          revision:quiz.revision,
           answers: Object.entries(answers).map(([questionId, selectedOptionId]) => ({
             questionId,
-            selectedOptionId,
+            ...(quiz.questions.find(q=>q.id===questionId)?.questionType==='SHORT_ANSWER'?{textAnswer:selectedOptionId}:{selectedOptionId}),
           })),
         }),
       });
@@ -147,7 +150,7 @@ export default function QuizPage() {
               {result.passed ? "" : ""}
             </div>
             <div className="quiz-score mb-2">
-              {result.percentage.toFixed(0)}%
+              {result.pending?(language==='th'?'รอตรวจ':'Awaiting grading'):result.percentage.toFixed(0)+'%'}
             </div>
             <div style={{ fontSize: 'var(--text-lg)', marginBottom: 'var(--space-2)' }}>
               {result.score}/{result.totalPoints} {t("points")} </div>
@@ -161,7 +164,7 @@ export default function QuizPage() {
             )}
 
             <div className="flex-center gap-3 mt-6">
-              {!result.passed && (
+              {!result.passed && !result.pending && (
                 <button onClick={handleRetry} className="btn btn-primary btn-lg"> {t("Retry Quiz")} </button>
               )}
               <Link
@@ -246,13 +249,14 @@ export default function QuizPage() {
             <span className="badge badge-info"> {t("Unlimited Retries")} </span>
           </div>
 
+          {quiz.attempts.filter(a=>a.status==='GRADED').slice(0,1).map(a=><section key={a.id} className="mt-4">{a.answers?.filter(answer=>answer.textAnswer).map(answer=><div key={answer.id} className="alert alert-info"><strong>{answer.question.questionText}</strong><p>{answer.textAnswer}</p><p>{answer.awardedPoints} / {answer.question.points} · {answer.feedback}</p></div>)}</section>)}
           {quiz.attempts.length > 0 && (
             <div className="mt-4">
               <div className="text-sm text-muted mb-2">{t("Previous Attempts:")}</div>
               <div className="flex gap-2 flex-wrap">
                 {quiz.attempts.map((a) => (
                   <span key={a.id} className={`badge ${a.passed ? 'badge-success' : 'badge-danger'}`}>
-                    {a.percentage.toFixed(0)}% — {new Date(a.startedAt).toLocaleDateString(language === 'th' ? 'th-TH' : 'en-GB')}
+                    {a.status==='PENDING'?(language==='th'?'รอครูตรวจ':'Pending'):a.percentage.toFixed(0)+'%'} — {new Date(a.startedAt).toLocaleDateString(language === 'th' ? 'th-TH' : 'en-GB')}
                   </span>
                 ))}
               </div>
@@ -271,13 +275,14 @@ export default function QuizPage() {
               <div className="flex-between mb-3">
                 <span className="badge badge-primary">{t("Question")} {i + 1}</span>
                 <span className="text-xs text-muted">
-                  {q.questionType === 'TRUE_FALSE' ? t("True/False") : t("Multiple Choice")}
+                  {q.questionType==='SHORT_ANSWER'?(language==='th'?'ข้อเขียน':'Written answer'):q.questionType === 'TRUE_FALSE' ? t("True/False") : t("Multiple Choice")}
                 </span>
               </div>
               <p style={{ fontWeight: 500, fontSize: 'var(--text-lg)', marginBottom: 'var(--space-4)' }}>
                 {q.questionText}
               </p>
               <div className="flex-col gap-3">
+                {q.questionType==='SHORT_ANSWER'&&<textarea className="form-textarea" aria-label={q.questionText} name={q.id} value={answers[q.id]||''} maxLength={10000} rows={6} disabled={submitting} onChange={e=>setAnswers(prev=>({...prev,[q.id]:e.target.value}))}/>}
                 {q.options.map((opt) => (
                   <label key={opt.id} className={`quiz-option ${answers[q.id] === opt.id ? 'selected' : ''}`}>
                     <input className="sr-only" type="radio" name={q.id} value={opt.id} checked={answers[q.id] === opt.id} onChange={() => setAnswers(prev => ({ ...prev, [q.id]: opt.id }))} disabled={submitting || quiz.questions.length === 0} />

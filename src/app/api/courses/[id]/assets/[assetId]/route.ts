@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { assetPath } from '@/lib/course-assets';
-import { canAccessChapter } from '@/lib/progression';
+import { canAccessLesson } from '@/lib/progression';
 export const runtime = 'nodejs';
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string; assetId: string }> }) {
   const session = await getActiveSession();
@@ -18,9 +18,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!manages) {
     if (!course.published) return new NextResponse(null, { status: 404 });
     if (course.thumbnail !== asset.fileUrl) {
-      const lessons = await prisma.lesson.findMany({ where: { chapter: { courseId: id }, OR: [{ imageUrls: { has: asset.fileUrl } }, { resources: { has: asset.fileUrl } }, { pdfUrl: asset.fileUrl }, { slideUrl: asset.fileUrl }, { videoUrl: asset.fileUrl }] }, select: { chapterId: true } });
+      const lessons = await prisma.lesson.findMany({ where: { chapter: { courseId: id }, OR: [{ imageUrls: { has: asset.fileUrl } }, { resources: { has: asset.fileUrl } }, { pdfUrl: asset.fileUrl }, { slideUrl: asset.fileUrl }, { videoUrl: asset.fileUrl }] }, select: { id: true } });
       let permitted = false;
-      for (const lesson of lessons) if (session.user.role !== 'STUDENT' || await canAccessChapter(session.user.id, id, lesson.chapterId)) { permitted = true; break; }
+      for (const lesson of lessons) if (session.user.role !== 'STUDENT' || await canAccessLesson(session.user.id, lesson.id)) { permitted = true; break; }
       if (!permitted) return new NextResponse(null, { status: 403 });
     }
   }

@@ -4,9 +4,11 @@ import { z } from 'zod';
 import prisma from '@/lib/prisma';
 
 const registerSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  name: z.string().trim().min(2).max(100),
+  fullName: z.string().trim().min(2).max(150),
+  nickname: z.string().trim().max(80).default(''),
+  email: z.string().trim().toLowerCase().email('Invalid email address').max(254),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(72),
   role: z.enum(['STUDENT', 'TEACHER']),
 });
 
@@ -22,7 +24,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { name, email, password, role } = validation.data;
+    const { name, fullName, nickname, email, password, role } = validation.data;
 
     const existingUser = await prisma.user.findUnique({
       where: { email },
@@ -39,7 +41,8 @@ export async function POST(request: Request) {
 
     const user = await prisma.user.create({
       data: {
-        name,
+        name, fullName, nickname,
+        teacherApproval: role === 'TEACHER' ? 'PENDING' : 'APPROVED',
         email,
         password: hashedPassword,
         role,
@@ -54,7 +57,7 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json(
-      { success: true, data: user, message: 'Registration successful' },
+      { success: true, data: user, pendingApproval: role === 'TEACHER', message: role === 'TEACHER' ? 'Teacher registration awaits administrator approval.' : 'Registration successful' },
       { status: 201 }
     );
   } catch (error) {

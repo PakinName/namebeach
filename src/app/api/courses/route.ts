@@ -1,3 +1,4 @@
+import { miniQuiz } from '@/lib/mini-quiz';
 import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
         estimatedTime: chapters.reduce((sum, chapter) => sum + chapter.lessons.reduce((total, lesson) => total + lesson.estimatedTime, 0), 0),
         teacherId: session.user.id,
         published,
-        chapters: { create: chapters.map(({ lessons, ...chapter }, orderIndex) => ({ ...chapter, orderIndex,
+        chapters: { create: chapters.map(({ lessons, ...chapter }, orderIndex) => ({ ...chapter, orderIndex, quiz:{create:miniQuiz(chapter.title)},
           lessons: { create: lessons.map((lesson, index) => ({ ...lesson, orderIndex: index, imageUrls: [], resources: [] })) },
         })) },
       },

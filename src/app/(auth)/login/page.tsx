@@ -19,7 +19,7 @@ export default function LoginPage() {
     event.preventDefault(); setError(''); setLoading(true);
     try {
       const result = await signIn('credentials', { email, password, redirect: false });
-      if (!result || result.error) setError('Unable to sign in. Check your email and password, then try again.');
+      if (!result || result.error) setError(result?.error?.includes('awaiting approval')?result.error:'Unable to sign in. Check your email and password, then try again.');
       else { router.push('/dashboard'); router.refresh(); }
     } catch { setError('Could not connect. Please try again.'); }
     finally { setLoading(false); }

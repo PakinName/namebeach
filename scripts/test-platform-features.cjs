@@ -9,7 +9,7 @@ const json=(method,body)=>({method,headers:{'Content-Type':'application/json'},b
 async function ok(r){const result=await r.json();assert.ok(r.ok,JSON.stringify(result));return result.data;}
 (async()=>{try{
   const admin=await login('admin@ailms.com');assert.equal((await admin('/api/admin')).status,200);
-  for(const role of ['STUDENT','TEACHER','TEACHER']){const index=users.length;const user=await ok(await admin('/api/admin',json('POST',{action:'create',name:prefix+' '+index,email:`${prefix}-${index}@example.test`,role,active:true,password:'Test-only-12345'})));assert.equal(user.password,undefined);users.push(user);}
+  for(const role of ['STUDENT','TEACHER','TEACHER']){const index=users.length;const user=await ok(await admin('/api/admin',json('POST',{action:'create',name:prefix+' '+index,fullName:'Legal Test '+index,email:`${prefix}-${index}@example.test`,role,active:true,password:'Test-only-12345'})));assert.equal(user.password,undefined);users.push(user);}
   const student=await login(users[0].email,'Test-only-12345'),teacher=await login(users[1].email,'Test-only-12345'),other=await login(users[2].email,'Test-only-12345');
   assert.equal((await student('/join')).status,200);
   assert.equal((await teacher('/join',{redirect:'manual'})).status,307);
@@ -42,6 +42,12 @@ async function ok(r){const result=await r.json();assert.ok(r.ok,JSON.stringify(r
   await ok(await teacher(access,json('POST',{code:'Course-123',published:false})));
   assert.equal((await student('/api/courses/'+course.id)).status,404);
   assert.equal((await student(access,json('POST',{code:'Course-123'}))).status,404);
+  const body={chapterId:course.chapters[0].id,title:'Test quiz',description:'Test',passingScore:75,timeLimit:null,questions:[{questionText:'One plus one?',questionType:'MULTIPLE_CHOICE',points:2,explanation:'Two',options:[{optionText:'2',isCorrect:true},{optionText:'3',isCorrect:false}]}]};
+  assert.equal((await other('/api/quizzes/manage',json('POST',body))).status,409);
+  const quiz=await ok(await teacher('/api/quizzes/manage',json('POST',body)));
+  assert.equal((await other('/api/quizzes/manage?id='+quiz.id)).status,404);
+  const managed=await ok(await teacher('/api/quizzes/manage?id='+quiz.id));
+  const secondQuiz=await ok(await teacher('/api/quizzes/manage',json('POST',{...body,chapterId:course.chapters[1].id})));
   await ok(await teacher(access,json('POST',{published:true})));
   const lockedLibrary=await ok(await student('/api/courses'));const lockedCourse=lockedLibrary.find(c=>c.id===course.id);
   assert.equal(lockedCourse.requiresCode,true);assert.equal(lockedCourse.joinCodeHash,undefined);
@@ -52,25 +58,25 @@ async function ok(r){const result=await r.json();assert.ok(r.ok,JSON.stringify(r
   assert.equal(await db.courseEnrollment.count({where:{courseId:course.id,studentId:users[0].id}}),1);
   await ok(await teacher(access,json('POST',{code:'Changed-456'})));
   assert.equal((await student('/api/courses/'+course.id)).status,200);
-  const body={chapterId:course.chapters[0].id,title:'Test quiz',description:'Test',passingScore:75,timeLimit:null,questions:[{questionText:'One plus one?',questionType:'MULTIPLE_CHOICE',points:2,explanation:'Two',options:[{optionText:'2',isCorrect:true},{optionText:'3',isCorrect:false}]}]};
-  assert.equal((await other('/api/quizzes/manage',json('POST',body))).status,409);
-  const quiz=await ok(await teacher('/api/quizzes/manage',json('POST',body)));
-  assert.equal((await other('/api/quizzes/manage?id='+quiz.id)).status,404);
-  const managed=await ok(await teacher('/api/quizzes/manage?id='+quiz.id));
   const overview=await ok(await student('/api/learning-overview'));assert.equal(overview.find(c=>c.courseId===course.id).status,'NOT_STARTED');
   await ok(await student('/api/certificates',{method:'POST'}));assert.equal(await db.certificate.count({where:{studentId:users[0].id,courseId:course.id}}),0);
-  // Passing a chapter assessment is sufficient; no lesson-click fixture for chapter one.
-  assert.equal((await student(`/api/quizzes/${quiz.id}/submit`,json('POST',{answers:[{questionId:managed.questions[0].id,selectedOptionId:'invalid-option'}]}))).status,400);
-  await ok(await student(`/api/quizzes/${quiz.id}/submit`,json('POST',{answers:[{questionId:managed.questions[0].id,selectedOptionId:managed.questions[0].options.find(o=>o.isCorrect).id}]})));
+  async function finishPart(id){const path='/api/lessons/'+id+'/checkpoint';const questions=Array.from({length:5},(_,i)=>({questionText:'Fixture checkpoint '+i,options:['A','B'],correctIndex:0,explanation:'A is the expected fixture answer.'}));assert.equal((await teacher(path,json('PUT',{revision:null,questions,reviewText:''}))).status,200);const checkpoint=await ok(await student(path));await ok(await student(path,json('POST',{revision:checkpoint.revision,answers:[0,0,0,0,0]})));}
+  // Enrollment and all lessons are now prerequisites for chapter assessments.
+  await finishPart(course.chapters[0].lessons[0].id);
+  assert.equal((await student(`/api/quizzes/${quiz.id}/submit`,json('POST',{revision:managed.revision,answers:[{questionId:managed.questions[0].id,selectedOptionId:'invalid-option'}]}))).status,400);
+  await ok(await student(`/api/quizzes/${quiz.id}/submit`,json('POST',{revision:managed.revision,answers:[{questionId:managed.questions[0].id,selectedOptionId:managed.questions[0].options.find(o=>o.isCorrect).id}]})));
   const partial=await ok(await student('/api/courses'));assert.equal(partial.find(c=>c.id===course.id).progress,50);assert.equal(await db.certificate.count({where:{studentId:users[0].id,courseId:course.id}}),0);
-  await ok(await student(`/api/lessons/${course.chapters[1].lessons[0].id}/complete`,{method:'POST'}));
+  await finishPart(course.chapters[1].lessons[0].id);
+
+  const secondManaged=await ok(await teacher('/api/quizzes/manage?id='+secondQuiz.id));
+  await ok(await student(`/api/quizzes/${secondQuiz.id}/submit`,json('POST',{revision:secondManaged.revision,answers:secondManaged.questions.map(q=>({questionId:q.id,selectedOptionId:q.options.find(o=>o.isCorrect).id}))})));
   const finished=await ok(await student('/api/courses'));assert.equal(finished.find(c=>c.id===course.id).progress,100);assert.ok(finished.find(c=>c.id===course.id).certificateId);
   await ok(await student('/api/certificates',{method:'POST'}));await ok(await student('/api/certificates',{method:'POST'}));
   assert.equal(await db.certificate.count({where:{studentId:users[0].id,courseId:course.id}}),1);
   const cert=await db.certificate.findFirst({where:{studentId:users[0].id,courseId:course.id}});assert.equal((await fetch(root+'/verify/'+cert.verificationId)).status,200);
   const completed=await ok(await student('/api/learning-overview'));assert.equal(completed.find(c=>c.courseId===course.id).status,'COMPLETED');
-  const changed={...body,id:quiz.id,passingScore:80};await ok(await teacher('/api/quizzes/manage',json('POST',changed)));
-  changed.questions=[{...body.questions[0],questionText:'Changed after attempt'}];assert.equal((await teacher('/api/quizzes/manage',json('POST',changed))).status,409);
+  const changed={...body,id:quiz.id,revision:managed.revision,passingScore:80};await ok(await teacher('/api/quizzes/manage',json('POST',changed)));
+  changed.revision=(await ok(await teacher('/api/quizzes/manage?id='+quiz.id))).revision;changed.questions=[{...body.questions[0],questionText:'Changed after attempt'}];assert.equal((await teacher('/api/quizzes/manage',json('POST',changed))).status,200);
   assert.equal((await teacher('/api/quizzes/manage?id='+quiz.id,{method:'DELETE'})).status,409);
   assert.equal((await student('/api/certificates',json('PATCH',{id:cert.id,reason:'Not allowed'}))).status,403);
   await ok(await admin('/api/certificates',json('PATCH',{id:cert.id,reason:'Integration test revocation'})));

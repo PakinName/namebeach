@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { canAccessChapter } from '@/lib/progression';
+import { canAccessLesson } from '@/lib/progression';
 
 // GET /api/lessons/[id] — Get lesson detail
 export async function GET(
@@ -21,6 +21,7 @@ export async function GET(
       include: {
         chapter: {
           include: {
+            quiz:{select:{id:true}},
             course: { select: { id: true, title: true, published: true, teacherId: true } },
           },
         },
@@ -33,15 +34,11 @@ export async function GET(
 
     // Security: Check chapter access for students
     if (session.user.role === 'STUDENT') {
-      const hasAccess = await canAccessChapter(
-        session.user.id,
-        lesson.chapter.courseId,
-        lesson.chapterId
-      );
+      const hasAccess = await canAccessLesson(session.user.id,id);
 
       if (!hasAccess) {
         return NextResponse.json(
-          { success: false, error: 'Chapter is locked. Complete the previous chapter first.' },
+          { success: false, error: 'กรุณาเข้าร่วมคอร์สและเรียนเรื่องก่อนหน้าให้จบ / Join the course and complete previous lessons first.' },
           { status: 403 }
         );
       }
@@ -61,10 +58,11 @@ export async function GET(
       completed = !!completion;
     }
 
+    const nextLesson=await prisma.lesson.findFirst({where:{chapterId:lesson.chapterId,orderIndex:{gt:lesson.orderIndex}},orderBy:{orderIndex:'asc'},select:{id:true,title:true}});
     const files = await prisma.fileUpload.findMany({ where: { fileUrl: { in: lesson.resources } }, select: { fileUrl: true, fileName: true } });
     return NextResponse.json({
       success: true,
-      data: { ...lesson, completed, canComplete: session.user.role === 'STUDENT', canManage: session.user.role === 'ADMIN' || lesson.chapter.course.teacherId === session.user.id, resourceNames: Object.fromEntries(files.map(file => [file.fileUrl, file.fileName])) },
+      data: { ...lesson, nextLesson, checkpointId:lesson.chapter.quiz?.id, completed, canComplete: session.user.role === 'STUDENT', canManage: session.user.role === 'ADMIN' || lesson.chapter.course.teacherId === session.user.id, resourceNames: Object.fromEntries(files.map(file => [file.fileUrl, file.fileName])) },
     });
   } catch (error) {
     console.error('Lesson GET error:', error);

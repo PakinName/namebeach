@@ -23,26 +23,8 @@ export async function canAccessChapter(
 
   if (!chapter || chapter.courseId !== courseId) return false;
 
-  // First chapter is always accessible
-  if (chapter.orderIndex === 0) return true;
-
-  // Check if this chapter is explicitly unlocked
-  const progress = await prisma.studentProgress.findUnique({
-    where: {
-      studentId_courseId_chapterId: {
-        studentId,
-        courseId,
-        chapterId,
-      },
-    },
-  });
-
-  if (progress?.unlocked) return true;
-  // Newly added chapters can follow a chapter a student already completed.
-  const previous = await prisma.chapter.findFirst({ where: { courseId, orderIndex: { lt: chapter.orderIndex } }, orderBy: { orderIndex: 'desc' }, select: { id: true } });
-  if (!previous) return true;
-  const previousProgress = await prisma.studentProgress.findUnique({ where: { studentId_courseId_chapterId: { studentId, courseId, chapterId: previous.id } }, select: { completed: true } });
-  return previousProgress?.completed === true;
+  const previous=await prisma.chapter.findMany({where:{courseId,orderIndex:{lt:chapter.orderIndex}},select:{id:true,lessons:{select:{id:true,lessonCompletions:{where:{studentId},select:{id:true}}}},quiz:{select:{attempts:{where:{studentId,status:'GRADED',passed:true},select:{id:true},take:1}}}}});
+  return previous.every(c=>c.lessons.length>0&&c.lessons.every(l=>l.lessonCompletions.length>0)&&!!c.quiz?.attempts.length);
 }
 
 /**
@@ -91,7 +73,8 @@ export async function processQuizCompletion(
   studentId: string,
   quizId: string,
   score: number,
-  percentage: number
+  percentage: number,
+  passingScore?: number
 ): Promise<{
   passed: boolean;
   nextChapterUnlocked: boolean;
@@ -118,7 +101,7 @@ export async function processQuizCompletion(
   if (!quiz) throw new Error('Quiz not found');
 
   const { chapter } = quiz;
-  const passed = percentage >= quiz.passingScore;
+  const passed = percentage >= (passingScore ?? quiz.passingScore);
 
   // Update progress with highest score
   const existingProgress = await prisma.studentProgress.findUnique({
@@ -246,8 +229,8 @@ export async function getStudentCourseProgress(
     where: { courseId },
     orderBy: { orderIndex: 'asc' },
     include: {
-      quiz: { select: { id: true } },
-      lessons: { select: { id: true, title: true }, orderBy: { orderIndex: 'asc' } },
+      quiz: { select: { id: true, attempts:{where:{studentId,status:'GRADED',passed:true},select:{id:true},take:1} } },
+      lessons: { select: { id: true, title: true, lessonCompletions:{where:{studentId},select:{id:true}} }, orderBy: { orderIndex: 'asc' } },
     },
   });
 
@@ -259,23 +242,24 @@ export async function getStudentCourseProgress(
     progressRecords.map((p) => [p.chapterId, p])
   );
 
-  const chaptersWithProgress = chapters.map((chapter, index) => {
+  const chaptersWithProgress = await Promise.all(chapters.map(async (chapter) => {
+    const unlocked=await canAccessChapter(studentId,courseId,chapter.id);
     const progress = progressMap.get(chapter.id);
     return {
       ...chapter,
       progress: progress
         ? {
-            completed: progress.completed,
-            unlocked: progress.unlocked || index === 0 || (index > 0 && progressMap.get(chapters[index - 1].id)?.completed === true),
+            completed: !!chapter.quiz?.attempts.length && chapter.lessons.length>0 && chapter.lessons.every(l=>l.lessonCompletions.length>0),
+            unlocked,
             highestScore: progress.highestScore,
           }
         : {
-            completed: false,
-            unlocked: index === 0 || (index > 0 && progressMap.get(chapters[index - 1].id)?.completed === true),
+            completed: !!chapter.quiz?.attempts.length && chapter.lessons.length>0 && chapter.lessons.every(l=>l.lessonCompletions.length>0),
+            unlocked,
             highestScore: 0,
           },
     };
-  });
+  }));
 
   const completedCount = chaptersWithProgress.filter(
     (c) => c.progress.completed
@@ -290,4 +274,15 @@ export async function getStudentCourseProgress(
         ? Math.round((completedCount / chapters.length) * 100)
         : 0,
   };
+}
+
+export async function canAccessLesson(studentId:string,lessonId:string){
+ const lesson=await prisma.lesson.findUnique({where:{id:lessonId},include:{chapter:true}});
+ if(!lesson||!await canAccessChapter(studentId,lesson.chapter.courseId,lesson.chapterId))return false;
+ const previous=await prisma.lesson.findMany({where:{chapterId:lesson.chapterId,orderIndex:{lt:lesson.orderIndex}},select:{lessonCompletions:{where:{studentId},select:{id:true}}}});
+ return previous.every(l=>l.lessonCompletions.length>0);
+}
+export async function canTakeQuiz(studentId:string,chapterId:string){
+ const chapter=await prisma.chapter.findUnique({where:{id:chapterId},include:{lessons:{select:{lessonCompletions:{where:{studentId},select:{id:true}}}}}});
+ return !!chapter&&await canAccessChapter(studentId,chapter.courseId,chapterId)&&chapter.lessons.length>0&&chapter.lessons.every(l=>l.lessonCompletions.length>0);
 }

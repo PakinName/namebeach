@@ -1,149 +1,23 @@
-import { issueEligibleCertificates } from '@/lib/student-overview';
 import { NextResponse } from 'next/server';
-import { getActiveSession } from '@/lib/auth';
-import prisma from '@/lib/prisma';
-import { processQuizCompletion, canAccessChapter } from '@/lib/progression';
 import { z } from 'zod';
-
-// POST /api/quizzes/[id]/submit — Submit quiz answers
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getActiveSession();
-    if (!session || session.user.role !== 'STUDENT') {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 403 });
-    }
-
-    const { id } = await params;
-    const input = z.object({answers:z.array(z.object({questionId:z.string().min(1).max(100),selectedOptionId:z.string().min(1).max(100)})).min(1).max(200)}).safeParse(await request.json().catch(()=>null));
-    if(!input.success)return NextResponse.json({success:false,error:'Invalid answers'},{status:400});
-    const { answers } = input.data;
-
-    if (!answers || !Array.isArray(answers) || answers.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Answers are required' },
-        { status: 400 }
-      );
-    }
-
-    // Get quiz with questions and correct answers
-    const quiz = await prisma.quiz.findUnique({
-      where: { id },
-      include: {
-        chapter: { include: { course: { select: { published:true } } } },
-        questions: {
-          include: {
-            options: true,
-          },
-        },
-      },
-    });
-
-    if (!quiz) {
-      return NextResponse.json({ success: false, error: 'Quiz not found' }, { status: 404 });
-    }
-
-    if(!quiz.chapter.course.published || !await canAccessChapter(session.user.id,quiz.chapter.courseId,quiz.chapterId))return NextResponse.json({success:false,error:'Quiz unavailable'},{status:403});
-    if(new Set(answers.map(a=>a.questionId)).size!==answers.length || answers.some(a=>!quiz.questions.some(q=>q.id===a.questionId&&q.options.some(o=>o.id===a.selectedOptionId))))return NextResponse.json({success:false,error:'Invalid question or option'},{status:400});
-
-    // Grade the quiz
-    let totalPoints = 0;
-    let earnedPoints = 0;
-    const gradedAnswers: {
-      questionId: string;
-      selectedOptionId: string;
-      isCorrect: boolean;
-      correctOptionId: string;
-      explanation: string | null;
-    }[] = [];
-
-    for (const question of quiz.questions) {
-      totalPoints += question.points;
-
-      const studentAnswer = answers.find((a) => a.questionId === question.id);
-      const correctOption = question.options.find((o) => o.isCorrect);
-
-      if (studentAnswer && correctOption) {
-        const isCorrect = studentAnswer.selectedOptionId === correctOption.id;
-        if (isCorrect) earnedPoints += question.points;
-
-        gradedAnswers.push({
-          questionId: question.id,
-          selectedOptionId: studentAnswer.selectedOptionId,
-          isCorrect,
-          correctOptionId: correctOption.id,
-          explanation: question.explanation,
-        });
-      }
-    }
-
-    const percentage = totalPoints > 0 ? (earnedPoints / totalPoints) * 100 : 0;
-    const passed = percentage >= quiz.passingScore;
-
-    // Create quiz attempt
-    const attempt = await prisma.quizAttempt.create({
-      data: {
-        quizId: id,
-        studentId: session.user.id,
-        score: earnedPoints,
-        percentage,
-        passed,
-        completedAt: new Date(),
-        answers: {
-          create: gradedAnswers.map((a) => ({
-            questionId: a.questionId,
-            selectedOptionId: a.selectedOptionId,
-            isCorrect: a.isCorrect,
-          })),
-        },
-      },
-    });
-
-    // Process progression
-    const progressionResult = await processQuizCompletion(
-      session.user.id,
-      id,
-      earnedPoints,
-      percentage
-    );
-
-    await issueEligibleCertificates(session.user.id).catch(() => console.warn('Certificate eligibility deferred; retry from certificates page.'));
-    // Get full questions with correct answers for results display
-    const questionsWithAnswers = quiz.questions.map((q) => {
-      const graded = gradedAnswers.find((a) => a.questionId === q.id);
-      return {
-        id: q.id,
-        questionText: q.questionText,
-        questionType: q.questionType,
-        explanation: q.explanation,
-        options: q.options.map((o) => ({
-          id: o.id,
-          optionText: o.optionText,
-          isCorrect: o.isCorrect,
-        })),
-        selectedOptionId: graded?.selectedOptionId || null,
-        isCorrect: graded?.isCorrect || false,
-      };
-    });
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        attemptId: attempt.id,
-        score: earnedPoints,
-        totalPoints,
-        percentage: Math.round(percentage * 10) / 10,
-        passed,
-        message: progressionResult.message,
-        nextChapterUnlocked: progressionResult.nextChapterUnlocked,
-        nextChapterId: progressionResult.nextChapterId,
-        questions: questionsWithAnswers,
-      },
-    });
-  } catch (error) {
-    console.error('Quiz submit error:', error);
-    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
-  }
+import prisma from '@/lib/prisma';
+import { getActiveSession } from '@/lib/auth';
+import { canTakeQuiz, processQuizCompletion } from '@/lib/progression';
+import { issueEligibleCertificates } from '@/lib/student-overview';
+const schema=z.object({revision:z.string(),answers:z.array(z.object({questionId:z.string().max(100),selectedOptionId:z.string().max(100).optional(),textAnswer:z.string().trim().max(10000).optional()})).min(1).max(100)});
+export async function POST(request:Request,{params}:{params:Promise<{id:string}>}){
+ const session=await getActiveSession();if(session?.user.role!=='STUDENT')return NextResponse.json({success:false},{status:403});const{id}=await params;const input=schema.safeParse(await request.json().catch(()=>null));if(!input.success)return NextResponse.json({success:false,error:'Invalid answers. Reload the quiz.'},{status:400});
+ try{
+ const quiz=await prisma.quiz.findUnique({where:{id},include:{questions:{where:{active:true},orderBy:{orderIndex:'asc'},include:{options:true}}}});
+ if(!quiz)return NextResponse.json({success:false},{status:404});if(!await canTakeQuiz(session.user.id,quiz.chapterId))return NextResponse.json({success:false,error:'เรียนทุกเรื่องในบทนี้ให้จบก่อนสอบ / Complete all lessons first'},{status:403});
+ const {answers,revision}=input.data;if(revision!==quiz.updatedAt.toISOString())return NextResponse.json({success:false,error:'ครูแก้ไขข้อสอบแล้ว กรุณาโหลดใหม่ / Quiz changed. Reload.'},{status:409});
+ if(answers.length!==quiz.questions.length||new Set(answers.map(a=>a.questionId)).size!==answers.length||answers.some(a=>{const q=quiz.questions.find(q=>q.id===a.questionId);return !q||(q.questionType==='SHORT_ANSWER'?!a.textAnswer||!!a.selectedOptionId:!!a.textAnswer||!q.options.some(o=>o.id===a.selectedOptionId));}))return NextResponse.json({success:false,error:'กรุณาตอบให้ครบทุกข้อ / Answer every question'},{status:400});
+ const pending=quiz.questions.some(q=>q.questionType==='SHORT_ANSWER'),totalPoints=quiz.questions.reduce((n,q)=>n+q.points,0);
+ const graded=quiz.questions.map(q=>{const a=answers.find(a=>a.questionId===q.id)!;const isCorrect=q.questionType!=='SHORT_ANSWER'&&q.options.some(o=>o.id===a.selectedOptionId&&o.isCorrect);return {questionId:q.id,selectedOptionId:a.selectedOptionId||null,textAnswer:a.textAnswer||null,isCorrect,awardedPoints:q.questionType==='SHORT_ANSWER'?null:isCorrect?q.points:0};});
+ const score=graded.reduce((n,a)=>n+(a.awardedPoints||0),0),percentage=score/totalPoints*100;
+ const attempt=await prisma.$transaction(async tx=>{await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${quiz.chapterId}))`;const current=await tx.quiz.findUniqueOrThrow({where:{id}});if(current.updatedAt.toISOString()!==revision)throw new Error('QUIZ_CHANGED');if(await tx.quizAttempt.count({where:{quizId:id,studentId:session.user.id,status:'PENDING'}}))throw new Error('PENDING_REVIEW');return tx.quizAttempt.create({data:{quizId:id,studentId:session.user.id,score,percentage,totalPoints,passingScore:quiz.passingScore,passed:!pending&&percentage>=quiz.passingScore,status:pending?'PENDING':'GRADED',completedAt:new Date(),answers:{create:graded}}});});
+ const progress=pending?{passed:false,nextChapterUnlocked:false,nextChapterId:null,message:'ส่งคำตอบแล้ว รอครูตรวจข้อเขียน / Submitted. Awaiting teacher grading.'}:await processQuizCompletion(session.user.id,id,score,percentage,attempt.passingScore);
+ if(!pending)await issueEligibleCertificates(session.user.id);
+ return NextResponse.json({success:true,data:{attemptId:attempt.id,score,totalPoints,percentage,pending,...progress,questions:pending?[]:quiz.questions.map(q=>({...q,selectedOptionId:graded.find(a=>a.questionId===q.id)?.selectedOptionId,isCorrect:graded.find(a=>a.questionId===q.id)?.isCorrect}))}});
+ }catch(e){const code=e instanceof Error?e.message:'';return NextResponse.json({success:false,error:code==='PENDING_REVIEW'?'มีคำตอบรอครูตรวจแล้ว / An attempt is awaiting grading':code==='QUIZ_CHANGED'?'Quiz changed. Reload.':'Could not submit quiz.'},{status:409});}
 }

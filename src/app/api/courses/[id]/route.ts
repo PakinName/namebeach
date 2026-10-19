@@ -61,9 +61,11 @@ export async function GET(
 
       const chaptersWithProgress = progress.chapters.map((chapter) => ({
         ...chapter,
-        lessons: chapter.lessons.map((lesson) => ({
+        quizReady: chapter.lessons.length>0 && chapter.lessons.every(l=>completedLessonIds.has(l.id)),
+        lessons: chapter.lessons.map((lesson,index) => ({
           ...lesson,
           completed: completedLessonIds.has(lesson.id),
+          locked: !chapter.progress.unlocked || chapter.lessons.slice(0,index).some(l=>!completedLessonIds.has(l.id)),
         })),
       }));
 

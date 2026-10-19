@@ -1,3 +1,4 @@
+import { canAccessLesson } from './progression';
 import { studentCourseFilter } from './course-access';
 import type { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
@@ -6,16 +7,19 @@ export interface LessonSource { id: string; title: string; content: string | nul
 export function accessibleLessons(user: { id: string; role: string }): Prisma.LessonWhereInput {
   if (user.role === 'ADMIN') return {};
   if (user.role === 'TEACHER') return { chapter: { course: { OR: [{ published: true }, { teacherId: user.id }] } } };
-  return { chapter: { course: studentCourseFilter(user.id), OR: [{ orderIndex: 0 }, { studentProgress: { some: { studentId: user.id, unlocked: true } } }] } };
+  return {chapter:{course:studentCourseFilter(user.id)}};
 }
 const select = { id: true, title: true, content: true, description: true, codeExample: true, objectives: true, chapter: { select: { course: { select: { title: true } } } } } as const;
 export async function getLearningContext(user: { id: string; role: string }, message: string, lessonId?: string): Promise<LessonSource[]> {
+  if (lessonId && user.role==='STUDENT' && !await canAccessLesson(user.id,lessonId)) return [];
   if (lessonId) return prisma.lesson.findMany({ where: { AND: [accessibleLessons(user), { id: lessonId }] }, select, take: 1 });
   const aliases: Record<string, string> = { 'ตัวแปร': 'variable', 'ฟังก์ชัน': 'function', 'วนซ้ำ': 'loop', 'ลูป': 'loop', 'ไพธอน': 'python', 'รายการ': 'list', 'ชนิดข้อมูล': 'data type', 'เงื่อนไข': 'condition', 'เริ่มต้น': 'introduction' };
   const expanded = Object.entries(aliases).reduce((value, [thai, english]) => message.includes(thai) ? `${value} ${english}` : value, message);
   const terms = [...new Set(expanded.toLowerCase().match(/[a-z]{3,}|[\u0E00-\u0E7F]+/g) || [])].filter(term => !['what','does','this','that','about','explain','please','could','would','lesson','summarize','with','give','have'].includes(term)).slice(-8);
   if (!terms.length) return [];
-  return prisma.lesson.findMany({ where: { AND: [accessibleLessons(user), { OR: terms.flatMap(term => [{ title: { contains: term, mode: 'insensitive' as const } }, { description: { contains: term, mode: 'insensitive' as const } }, { content: { contains: term, mode: 'insensitive' as const } }]) }] }, select, orderBy: { orderIndex: 'asc' }, take: 3 });
+  const found = await prisma.lesson.findMany({ where: { AND: [accessibleLessons(user), { OR: terms.flatMap(term => [{ title: { contains: term, mode: 'insensitive' as const } }, { description: { contains: term, mode: 'insensitive' as const } }, { content: { contains: term, mode: 'insensitive' as const } }]) }] }, select, orderBy: { orderIndex: 'asc' }, take: 12 });
+  const allowed=await Promise.all(found.map(async lesson=>user.role!=='STUDENT'||await canAccessLesson(user.id,lesson.id)?lesson:null));
+  return allowed.filter((lesson):lesson is LessonSource=>lesson!==null).slice(0,3);
 }
 export function localStudyReply(sources: LessonSource[], language: 'th' | 'en') {
   if (!sources.length) return language === 'th'
@@ -24,4 +28,14 @@ export function localStudyReply(sources: LessonSource[], language: 'th' | 'en') 
   const intro = language === 'th' ? 'พบเนื้อหาที่เกี่ยวข้องในบทเรียนของคุณ ด้านล่างเป็นข้อความจากต้นฉบับ (ไม่ได้สร้างคำตอบด้วยโมเดล AI):' : 'Here are relevant passages from your lessons. These are source excerpts, not an AI-generated answer:';
   const passages = sources.map(source => `## ${source.title}\n${(source.content || source.description || source.objectives.join('\n')).slice(0, 1400)}${source.codeExample ? '\n\n```\n' + source.codeExample.slice(0, 700) + '\n```' : ''}`).join('\n\n');
   return `${intro}\n\n${passages}\n\n${language === 'th' ? 'เปิดบทเรียนอ้างอิงด้านล่างเพื่ออ่านต่อ คุณสามารถค้นคำศัพท์หรือหัวข้ออื่นได้' : 'Open a source lesson below to keep reading, or search for another topic.'}`;
+}
+
+// Only this student's submitted checkpoint and this accessible lesson are included.
+export async function getCheckpointReview(user:{id:string;role:string},lessonId:string){
+  if(user.role!=='STUDENT'||!await canAccessLesson(user.id,lessonId))return null;
+  const attempt=await prisma.lessonCheckAttempt.findFirst({where:{lessonId,studentId:user.id},orderBy:{createdAt:'desc'}});
+  if(!attempt)return null;
+  const sources=await getLearningContext(user,'',lessonId);
+  const quiz=await prisma.lessonCheckpoint.findUnique({where:{lessonId},select:{reviewText:true}});
+  return {sources,feedback:JSON.stringify({questions:attempt.questions,answers:attempt.answers,score:attempt.score,review:quiz?.reviewText}).slice(0,16000)};
 }

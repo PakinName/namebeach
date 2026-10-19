@@ -27,6 +27,7 @@ enum Difficulty {
 enum QuestionType {
   MULTIPLE_CHOICE
   TRUE_FALSE
+  SHORT_ANSWER
 }
 
 enum NotificationType {
@@ -51,6 +52,10 @@ enum SupportStatus {
 model User {
   id        String   @id @default(cuid())
   name      String
+  fullName  String?
+  nickname  String?
+  teacherApproval String @default("APPROVED")
+  deletedAt DateTime?
   email     String   @unique
   password  String
   role      Role
@@ -72,6 +77,7 @@ model User {
   notifications        Notification[]
   contactSupports      ContactSupport[]
   lessonCompletions    LessonCompletion[]
+  lessonCheckAttempts LessonCheckAttempt[]
   supportReplies       SupportReply[]
   auditEvents          AuditEvent[]
   certificates         Certificate[]
@@ -144,6 +150,8 @@ model Lesson {
   chapter            Chapter            @relation(fields: [chapterId], references: [id], onDelete: Cascade)
   classroomLessons   ClassroomLesson[]
   lessonCompletions  LessonCompletion[]
+  checkpoint LessonCheckpoint?
+  checkAttempts LessonCheckAttempt[]
 
   @@index([chapterId])
 }
@@ -189,6 +197,7 @@ model Quiz {
 model QuizQuestion {
   id           String       @id @default(cuid())
   quizId       String
+  active       Boolean      @default(true)
   questionText String       @db.Text
   questionType QuestionType
   explanation  String?      @db.Text
@@ -224,6 +233,9 @@ model QuizAttempt {
   id          String    @id @default(cuid())
   quizId      String
   studentId   String
+  status      String @default("GRADED")
+  totalPoints Float @default(0)
+  passingScore Float @default(50)
   score       Float
   percentage  Float
   passed      Boolean
@@ -243,13 +255,16 @@ model QuizAnswer {
   id               String  @id @default(cuid())
   attemptId        String
   questionId       String
-  selectedOptionId String
+  selectedOptionId String?
+  textAnswer       String? @db.Text
+  awardedPoints    Float?
+  feedback         String? @db.Text
   isCorrect        Boolean
 
   // Relations
   attempt        QuizAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   question       QuizQuestion @relation(fields: [questionId], references: [id])
-  selectedOption QuizOption   @relation(fields: [selectedOptionId], references: [id])
+  selectedOption QuizOption?  @relation(fields: [selectedOptionId], references: [id])
 }
 
 model Classroom {
@@ -488,4 +503,26 @@ model CourseEnrollment {
  createdAt DateTime @default(now())
  course Course @relation(fields:[courseId], references:[id], onDelete:Cascade)
  @@unique([studentId,courseId])
+}
+
+model LessonCheckpoint {
+  id String @id @default(cuid())
+  lessonId String @unique
+  questions Json
+  reviewText String @default("") @db.Text
+  updatedAt DateTime @updatedAt
+  lesson Lesson @relation(fields:[lessonId],references:[id],onDelete:Cascade)
+}
+model LessonCheckAttempt {
+  id String @id @default(cuid())
+  lessonId String
+  studentId String
+  score Int
+  passed Boolean
+  questions Json
+  answers Json
+  createdAt DateTime @default(now())
+  lesson Lesson @relation(fields:[lessonId],references:[id],onDelete:Cascade)
+  student User @relation(fields:[studentId],references:[id],onDelete:Cascade)
+  @@index([studentId,lessonId,createdAt])
 }

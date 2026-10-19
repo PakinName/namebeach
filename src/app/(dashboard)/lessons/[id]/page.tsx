@@ -1,5 +1,6 @@
 'use client';
 /* eslint-disable @next/next/no-img-element -- Authenticated lesson images. */
+import LessonCheckpoint from '@/components/learning/LessonCheckpoint';
 import LessonArticle from '@/components/ui/LessonArticle';
 import { useLanguage } from '@/components/providers/LanguageProvider';
 
@@ -21,6 +22,7 @@ interface Lesson {
   estimatedTime: number | null;
   objectives: string[];
   resources: string[];
+  nextLesson?:{id:string;title:string}|null;checkpointId?:string;
   completed: boolean;
   canManage: boolean;
   canComplete: boolean;
@@ -39,7 +41,6 @@ export default function LessonPage() {
   const params = useParams();
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [loading, setLoading] = useState(true);
-  const [completing, setCompleting] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [error, setError] = useState('');
 
@@ -62,19 +63,6 @@ export default function LessonPage() {
     };
     fetchLesson();
   }, [params.id]);
-
-  const handleComplete = async () => {
-    setCompleting(true);
-    try {
-      const res = await fetch(`/api/lessons/${params.id}/complete`, { method: 'POST' });
-      const data = await res.json();
-      if (data.success) { setCompleted(true); setError(''); } else { setError(data.error || 'Could not save your progress. Please try again.'); }
-    } catch {
-      setError('Could not save your progress. Please try again.');
-    } finally {
-      setCompleting(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -103,7 +91,7 @@ export default function LessonPage() {
   };
 
   return (
-    <div className="animate-fadeIn" style={{ maxWidth: 900, margin: '0 auto' }}>
+    <div id="lesson-content" className="animate-fadeIn" style={{ maxWidth: 900, margin: '0 auto' }}>
       {/* Breadcrumb */}
       <nav className="breadcrumb">
         <span className="breadcrumb-item">
@@ -139,7 +127,7 @@ export default function LessonPage() {
         </div>
       </div>
 
-      <div className="lesson-assistant-banner mb-6"><span className="stat-card-icon"><Icon name="spark" /></span><div><strong>{t("Make this lesson clearer.")}</strong><p>{t("Ask a question, get a summary, or work through an example.")}</p></div><Link href={`/assistant?lesson=${lesson.id}`} className="btn btn-primary btn-sm">{t("Ask about this lesson")}<Icon name="arrow" size={15} /></Link></div>
+      <div className="lesson-assistant-banner mb-6"><span className="stat-card-icon"><Icon name="spark" /></span><div><strong>{t("Make this lesson clearer.")}</strong><p>{t("Ask a question, get a summary, or work through an example.")}</p></div><Link href={`/assistant?lessonId=${lesson.id}&summary=1`} className="btn btn-primary btn-sm">{t("Ask about this lesson")}<Icon name="arrow" size={15} /></Link></div>
       {/* Learning Objectives */}
       {lesson.objectives.length > 0 && (
         <div className="card mb-6">
@@ -253,9 +241,11 @@ export default function LessonPage() {
         </div>
       )}
 
+      <LessonCheckpoint key={lesson.id} lessonId={lesson.id} onPassed={()=>setCompleted(true)} />
       {/* Mark as Complete */}
       {lesson.canComplete && <div className="card mb-6">
         <div className="card-body text-center" style={{ padding: 'var(--space-8)' }}>
+          {completed&&<div className="mb-4">{lesson.nextLesson?<Link href={`/lessons/${lesson.nextLesson.id}`} className="btn btn-primary">{t('Next lesson')}: {lesson.nextLesson.title}</Link>:lesson.checkpointId?<Link href={`/quizzes/${lesson.checkpointId}`} className="btn btn-primary">{t('Take Quiz')}</Link>:null}</div>}
           {completed ? (
             <div>
               <div style={{ fontSize: '3rem', marginBottom: 'var(--space-3)' }}></div>
@@ -263,17 +253,7 @@ export default function LessonPage() {
               <Link href={`/courses/${lesson.chapter.courseId}`} className="btn btn-primary mt-4"> {t("Back to Course")} </Link>
             </div>
           ) : (
-            <div>
-              <h3 style={{ fontWeight: 600, marginBottom: 'var(--space-2)' }}>{t("Finished this lesson?")}</h3>
-              <p className="text-muted mb-4">{t("Mark it as complete to track your progress")}</p>
-              <button
-                onClick={handleComplete}
-                className={`btn btn-success btn-lg ${completing ? 'btn-loading' : ''}`}
-                disabled={completing}
-              >
-                {completing ? t("Saving...") : t(" Mark as Complete")}
-              </button>
-            </div>
+            <p className="text-muted">{t('Complete the lesson checkpoint above to continue.')}</p>
           )}
         </div>
       </div>

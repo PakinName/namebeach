@@ -1,14 +1,14 @@
 import prisma from './prisma';
 import { studentCourseFilter } from './course-access';
-import { canAccessChapter } from './progression';
+import { canAccessChapter, canTakeQuiz } from './progression';
 
 export async function studentOverview(studentId: string) {
-  const courses = await prisma.course.findMany({ where: studentCourseFilter(studentId), orderBy: { title:'asc' }, include: { chapters: { orderBy: { orderIndex:'asc' }, include: { lessons: { orderBy: { orderIndex:'asc' }, select: { id:true,title:true,lessonCompletions: { where: { studentId }, select: { completedAt:true } } } }, quiz: { include: { attempts: { where: { studentId }, orderBy: { startedAt:'desc' }, select: { percentage:true,passed:true,startedAt:true } } } } } } } });
+  const courses = await prisma.course.findMany({ where: studentCourseFilter(studentId), orderBy: { title:'asc' }, include: { chapters: { orderBy: { orderIndex:'asc' }, include: { lessons: { orderBy: { orderIndex:'asc' }, select: { id:true,title:true,lessonCompletions: { where: { studentId }, select: { completedAt:true } } } }, quiz: { include: { attempts: { where: { studentId }, orderBy: { startedAt:'desc' }, select: { percentage:true,passed:true,startedAt:true,status:true } } } } } } } });
   return Promise.all(courses.map(async course => {
     const lessons = course.chapters.flatMap(chapter=>chapter.lessons);
     const done = lessons.filter(lesson=>lesson.lessonCompletions.length>0).length;
-    const quizzes = course.chapters.flatMap(chapter=>chapter.quiz?[{ id:chapter.quiz.id,title:chapter.quiz.title,passingScore:chapter.quiz.passingScore,highestScore:chapter.quiz.attempts.length?Math.max(...chapter.quiz.attempts.map(a=>a.percentage)):null,passed:chapter.quiz.attempts.some(a=>a.percentage>=chapter.quiz!.passingScore) }]:[]);
-    const completedChapters = course.chapters.filter(c => c.quiz ? c.quiz.attempts.some(a=>a.percentage>=c.quiz!.passingScore) : c.lessons.length>0 && c.lessons.every(l=>l.lessonCompletions.length>0)).length;
+    const quizzes = await Promise.all(course.chapters.filter(chapter=>chapter.quiz).map(async chapter=>{const quiz=chapter.quiz!;const graded=quiz.attempts.filter(a=>a.status==='GRADED');return {id:quiz.id,title:quiz.title,passingScore:quiz.passingScore,highestScore:graded.length?Math.max(...graded.map(a=>a.percentage)):null,passed:graded.some(a=>a.passed),pending:quiz.attempts.some(a=>a.status==='PENDING'),ready:await canTakeQuiz(studentId,chapter.id)};}));
+    const completedChapters = course.chapters.filter(c => c.lessons.length>0 && c.lessons.every(l=>l.lessonCompletions.length>0) && !!c.quiz?.attempts.some(a=>a.passed&&a.status==='GRADED')).length;
     const completed = course.chapters.length>0 && completedChapters===course.chapters.length;
     let nextLesson: {id:string;title:string}|null = null;
     for (const chapter of course.chapters) {
@@ -23,12 +23,12 @@ export async function issueEligibleCertificates(studentId: string) {
   // Serializable snapshot means lessons, passing criteria and issue record agree.
   await prisma.$transaction(async tx => {
     const student=await tx.user.findUnique({where:{id:studentId}});
-    if(!student?.active||student.role!=='STUDENT')return;
-    const courses=await tx.course.findMany({where:studentCourseFilter(studentId),include:{chapters:{include:{lessons:{select:{id:true,lessonCompletions:{where:{studentId},select:{id:true}}}},quiz:{include:{attempts:{where:{studentId},select:{percentage:true}}}}}}}});
+    if(!student?.active||student.role!=='STUDENT'||!student.fullName?.trim())return;
+    const courses=await tx.course.findMany({where:studentCourseFilter(studentId),include:{chapters:{include:{lessons:{select:{id:true,lessonCompletions:{where:{studentId},select:{id:true}}}},quiz:{include:{attempts:{where:{studentId,status:'GRADED'},select:{percentage:true,passed:true}}}}}}}});
     for(const course of courses){
       const lessons=course.chapters.flatMap(c=>c.lessons);
-      if(!course.chapters.length||course.chapters.some(c=>c.quiz ? !c.quiz.attempts.some(a=>a.percentage>=c.quiz!.passingScore) : !c.lessons.length||c.lessons.some(l=>!l.lessonCompletions.length)))continue;
-      await tx.certificate.upsert({where:{studentId_courseId:{studentId,courseId:course.id}},update:{},create:{studentId,courseId:course.id,studentName:student.name,courseTitle:course.title,criteria:{policy:'chapter-mastery-v1',lessons:lessons.map(l=>l.id),quizzes:course.chapters.flatMap(c=>c.quiz?[{id:c.quiz.id,passingScore:c.quiz.passingScore}]:[])}}});
+      if(!course.chapters.length||course.chapters.some(c=>!c.quiz?.attempts.some(a=>a.passed)||!c.lessons.length||c.lessons.some(l=>!l.lessonCompletions.length)))continue;
+      await tx.certificate.upsert({where:{studentId_courseId:{studentId,courseId:course.id}},update:{studentName:student.fullName},create:{studentId,courseId:course.id,studentName:student.fullName,courseTitle:course.title,criteria:{policy:'sequential-lessons-and-graded-checkpoints-v2',lessons:lessons.map(l=>l.id),quizzes:course.chapters.flatMap(c=>c.quiz?[{id:c.quiz.id,passingScore:c.quiz.passingScore}]:[])}}});
     }
   },{isolationLevel:'Serializable'});
 }

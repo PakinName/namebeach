@@ -1,0 +1,54 @@
+{
+  "database": "ai_lms",
+  "schema": "public",
+  "tables": 28,
+  "columns": 207,
+  "foreignKeys": 36,
+  "indexes": 62,
+  "enums": 5,
+  "overviewForeignKeys": 36,
+  "outputs": [
+    {
+      "file": "ai-lms-complete",
+      "width": 2458,
+      "height": 3006,
+      "tables": 28,
+      "foreignKeys": 36
+    },
+    {
+      "file": "01-learning",
+      "width": 1846,
+      "height": 1446,
+      "tables": 7,
+      "foreignKeys": 7
+    },
+    {
+      "file": "02-classroom",
+      "width": 1234,
+      "height": 1350,
+      "tables": 5,
+      "foreignKeys": 4
+    },
+    {
+      "file": "03-assessment",
+      "width": 1234,
+      "height": 1278,
+      "tables": 5,
+      "foreignKeys": 6
+    },
+    {
+      "file": "04-user-services",
+      "width": 1846,
+      "height": 1422,
+      "tables": 9,
+      "foreignKeys": 8
+    },
+    {
+      "file": "05-system",
+      "width": 1234,
+      "height": 678,
+      "tables": 2,
+      "foreignKeys": 0
+    }
+  ]
+}

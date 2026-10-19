@@ -6,8 +6,9 @@ import './certificate.css';
 export default async function VerifyCertificate({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
-  const certificate = await prisma.certificate.findUnique({ where: { verificationId: id }, select: { studentName: true, courseTitle: true, issuedAt: true, revokedAt: true, verificationId: true } });
+  const certificate = await prisma.certificate.findUnique({ where: { verificationId: id }, select: { student:{select:{fullName:true}},studentName: true, courseTitle: true, issuedAt: true, revokedAt: true, verificationId: true } });
   if (!certificate) notFound();
+  if(!certificate.student.fullName)return <main className="card card-body"><h1>กรุณากรอกชื่อจริงในหน้าโปรไฟล์ก่อนแสดงเกียรติบัตร / Complete your legal name in your profile</h1></main>;
   return <main className="certificate-page">
     <article className="certificate-sheet" aria-label="เกียรติบัตรสำเร็จการเรียน">
       <div className="certificate-corner corner-top" aria-hidden="true" />
@@ -15,7 +16,7 @@ export default async function VerifyCertificate({ params }: { params: Promise<{ 
       <header className="certificate-brand"><span className="certificate-brand-icon" aria-hidden="true">✦</span><span>NovaX<small>LEARNING · GROWTH · ACHIEVEMENT</small></span></header>
       <div className="certificate-heading"><p className="certificate-eyebrow">CERTIFICATE OF COMPLETION</p><h1>เกียรติบัตรสำเร็จการเรียน</h1><div className="certificate-divider" aria-hidden="true"><span>✦</span></div></div>
       <p className="certificate-intro">เกียรติบัตรฉบับนี้มอบให้แก่<span>This certificate is proudly presented to</span></p>
-      <h2 className="certificate-recipient">{certificate.studentName}</h2>
+      <h2 className="certificate-recipient">{certificate.student.fullName}</h2>
       <p className="certificate-description">เพื่อรับรองว่าได้สำเร็จการศึกษาตามเกณฑ์ของรายวิชา<span>For successfully fulfilling the requirements of the course</span></p>
       <h2 className="certificate-course">{certificate.courseTitle}</h2>
       <footer className="certificate-footer">

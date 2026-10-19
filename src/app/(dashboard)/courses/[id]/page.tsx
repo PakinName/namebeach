@@ -25,8 +25,8 @@ interface CourseDetail {
     title: string;
     description: string | null;
     orderIndex: number;
-    quiz: { id: string } | null;
-    lessons: Array<{ id: string; title: string; completed?: boolean }>;
+    quizReady?:boolean; quiz: { id: string } | null;
+    lessons: Array<{ id: string; title: string; completed?: boolean;locked?:boolean }>;
     progress?: { completed: boolean; unlocked: boolean; highestScore: number };
   }>;
 }
@@ -148,7 +148,7 @@ export default function CourseDetailPage() {
 
               <div className="chapter-info" style={{ flex: 1 }}>
                 <div className="chapter-title">{chapter.title}</div>
-                {!isLocked && <div className="chapter-lessons">{chapter.lessons.map((lesson) => <Link key={lesson.id} href={`/lessons/${lesson.id}`}><Icon name={lesson.completed ? 'check' : 'play'} size={13} />{lesson.title}</Link>)}</div>}
+                {!isLocked && <div className="chapter-lessons">{chapter.lessons.map((lesson) => lesson.locked ? <span key={lesson.id}><Icon name="lock" size={13}/>{lesson.title}</span> : <Link key={lesson.id} href={`/lessons/${lesson.id}`}><Icon name={lesson.completed ? 'check' : 'play'} size={13} />{lesson.title}</Link>)}</div>}
                 {chapter.description && (
                   <div className="chapter-desc">{chapter.description}</div>
                 )}
@@ -174,9 +174,10 @@ export default function CourseDetailPage() {
                   > {t("Start Learning")} </Link>
                 )}
 
-                {!isLocked && chapter.quiz && (
+                {!isLocked && chapter.quiz && chapter.quizReady!==false && (
                   <Link href={`/quizzes/${chapter.quiz.id}`} className="btn btn-outline btn-sm"> {t("Take Quiz")} </Link>
                 )}
+                {!isLocked&&chapter.quiz&&chapter.quizReady===false&&<span className="badge badge-warning">{t('Complete all lessons before the quiz')}</span>}
               </div>
             </div>
           );

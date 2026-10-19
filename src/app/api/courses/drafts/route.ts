@@ -1,3 +1,4 @@
+import { miniQuiz } from '@/lib/mini-quiz';
 import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -13,7 +14,7 @@ export async function POST(request: Request) {
     const { chapters, ...course } = parsed.data;
     const saved = await prisma.course.create({ data: { ...course, teacherId: session.user.id, published: false,
       estimatedTime: chapters.reduce((sum, chapter) => sum + chapter.lessons.reduce((total, lesson) => total + lesson.estimatedTime,0),0),
-      chapters: { create: chapters.map(({ lessons, ...chapter }, index) => ({ ...chapter, orderIndex: index, lessons: { create: lessons.map((lesson, orderIndex) => ({ ...lesson, orderIndex, imageUrls: [], resources: [] })) } })) },
+      chapters: { create: chapters.map(({ lessons, ...chapter }, index) => ({ ...chapter, orderIndex: index, quiz:{create:miniQuiz(chapter.title)}, lessons: { create: lessons.map((lesson, orderIndex) => ({ ...lesson, orderIndex, imageUrls: [], resources: [] })) } })) },
     }, select: { id: true } });
     return NextResponse.json({ success: true, data: saved }, { status: 201 });
   } catch { return NextResponse.json({ success: false, error: 'SAVE_FAILED' }, { status: 500 }); }

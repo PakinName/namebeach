@@ -1,0 +1,8 @@
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { getActiveSession } from '@/lib/auth';
+import prisma from '@/lib/prisma';
+import { issueEligibleCertificates } from '@/lib/student-overview';
+export async function GET(){const session=await getActiveSession();if(!session)return NextResponse.json({success:false},{status:401});if(session.user.role==='STUDENT')await issueEligibleCertificates(session.user.id);return NextResponse.json({success:true,data:await prisma.certificate.findMany({where:session.user.role==='ADMIN'?{}:{studentId:session.user.id},orderBy:{issuedAt:'desc'},take:200})});}
+export async function POST(){const session=await getActiveSession();if(session?.user.role!=='STUDENT')return NextResponse.json({success:false},{status:403});try{await issueEligibleCertificates(session.user.id);return NextResponse.json({success:true});}catch{return NextResponse.json({success:false,error:'Please retry certificate eligibility check.'},{status:409});}}
+export async function PATCH(request:Request){const session=await getActiveSession();if(session?.user.role!=='ADMIN')return NextResponse.json({success:false},{status:403});const input=z.object({id:z.string().min(1),reason:z.string().trim().min(3).max(500)}).safeParse(await request.json().catch(()=>null));if(!input.success)return NextResponse.json({success:false},{status:400});await prisma.$transaction(async tx=>{await tx.certificate.update({where:{id:input.data.id},data:{revokedAt:new Date(),revokeReason:input.data.reason}});await tx.auditEvent.create({data:{actorId:session.user.id,action:'certificate.revoke',entityType:'certificate',entityId:input.data.id}});});return NextResponse.json({success:true});}

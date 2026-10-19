@@ -5,11 +5,15 @@ import { Prisma } from '@prisma/client';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 
-const userFields = { id: true, name: true, email: true, role: true, active: true, createdAt: true } as const;
-const account = z.object({ name: z.string().trim().min(2).max(100), email: z.string().trim().toLowerCase().email().max(254), role: z.enum(['STUDENT','TEACHER','ADMIN']), active: z.boolean() });
+const userFields = { id: true, name: true, fullName:true, nickname:true, teacherApproval:true, deletedAt:true, email: true, role: true, active: true, createdAt: true } as const;
+const account = z.object({ name: z.string().trim().min(2).max(100), email: z.string().trim().toLowerCase().email().max(254), role: z.enum(['STUDENT','TEACHER','ADMIN']), active: z.boolean(), fullName:z.string().trim().max(150).nullable().optional(), nickname:z.string().trim().max(80).nullable().optional() });
 const action = z.discriminatedUnion('action', [
   account.extend({ action: z.literal('create'), password: z.string().min(10).max(72) }),
   account.extend({ action: z.literal('update'), id: z.string().min(1).max(100) }),
+  z.object({action:z.literal('approve'),id:z.string(),approved:z.boolean()}),
+  z.object({action:z.literal('delete'),id:z.string()}),
+  z.object({action:z.literal('restore'),id:z.string()}),
+  z.object({action:z.literal('reset-password'),id:z.string(),password:z.string().min(8).max(72)}),
   z.object({ action: z.literal('settings'), announcement: z.string().trim().max(2000) }),
 ]);
 
@@ -19,13 +23,14 @@ export async function GET(request: Request) {
   const search = new URL(request.url).searchParams;
   const page = Math.max(1, Math.min(10000, Math.floor(Number(search.get('page'))) || 1));
   const q = (search.get('q') || '').slice(0,100);
-  const where = q ? { OR: [{ name: { contains: q, mode: 'insensitive' as const } }, { email: { contains: q, mode: 'insensitive' as const } }] } : {};
+  const status=search.get('status');
+  const where = {deletedAt:status==='deleted'?{not:null}:null,...(status==='pending'?{role:'TEACHER' as const,teacherApproval:'PENDING'}:{}), ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' as const } }, { email: { contains: q, mode: 'insensitive' as const } }] } : {})};
   const [users, count, courses, roles, attempts, lessons, tickets, announcement] = await Promise.all([
     prisma.user.findMany({ where, select: userFields, orderBy: { createdAt: 'desc' }, skip: (page-1)*25, take: 25 }),
     prisma.user.count({ where }),
     prisma.course.findMany({ orderBy: { updatedAt: 'desc' }, take: 100, select: { id: true, title: true, published: true, teacher: { select: { name: true } } } }),
     prisma.user.groupBy({ by: ['role'], _count: true }),
-    prisma.quizAttempt.aggregate({ _count: true, _avg: { percentage: true } }),
+    prisma.quizAttempt.aggregate({ where:{status:'GRADED'}, _count: true, _avg: { percentage: true } }),
     prisma.lessonCompletion.count(),
     prisma.contactSupport.count({ where: { status: { in: ['OPEN','IN_PROGRESS'] } } }),
     prisma.siteSetting.findUnique({ where: { key: 'announcement' } }),
@@ -39,7 +44,7 @@ export async function POST(request: Request) {
   const parsed = action.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ success: false, error: 'Invalid input: check name, email and password (10–72 characters).' }, { status: 400 });
   const input = parsed.data;
-  const password = input.action === 'create' ? await bcrypt.hash(input.password,12) : undefined;
+  const password = (input.action === 'create'||input.action==='reset-password') ? await bcrypt.hash(input.password,12) : undefined;
   try {
     const result = await prisma.$transaction(async tx => {
       // Serialize role/deactivation changes, including the last-admin count.
@@ -51,15 +56,25 @@ export async function POST(request: Request) {
         await tx.auditEvent.create({ data: { actorId: actor.id, action: 'settings.update', entityType: 'setting', entityId: 'announcement' } });
         return { saved: true };
       }
+      if (input.action === 'approve' || input.action === 'delete' || input.action === 'reset-password' || input.action === 'restore') {
+        const target=await tx.user.findUnique({where:{id:input.id}});
+        if(!target||(input.action==='restore'?!target.deletedAt:!!target.deletedAt))throw new Error('Account not found');
+        if(input.action==='delete' && (target.id===actor.id || (target.role==='ADMIN'&&target.active&&await tx.user.count({where:{active:true,role:'ADMIN',deletedAt:null}})<=1)))throw new Error('The last active administrator cannot be disabled or demoted.');
+        if(input.action==='approve' && target.role!=='TEACHER')throw new Error('Forbidden');
+        await tx.user.update({where:{id:target.id},data:input.action==='restore'?{deletedAt:null,active:false}:input.action==='approve'?{teacherApproval:input.approved?'APPROVED':'REJECTED'}:input.action==='delete'?{deletedAt:new Date(),active:false}:{password:password!}});
+        await tx.auditEvent.create({data:{actorId:actor.id,action:'user.'+input.action,entityType:'user',entityId:target.id}});
+        return {saved:true};
+      }
       if (input.action === 'update') {
         const target = await tx.user.findUnique({ where: { id: input.id } });
-        if (!target) throw new Error('Account not found');
+        if (!target || target.deletedAt) throw new Error('Account not found');
         if (target.role === 'ADMIN' && target.active && (!input.active || input.role !== 'ADMIN') && await tx.user.count({ where: { active: true, role: 'ADMIN' } }) <= 1) throw new Error('The last active administrator cannot be disabled or demoted.');
       }
-      const values = { name: input.name, email: input.email, role: input.role, active: input.active };
+      const values = { fullName:input.fullName, nickname:input.nickname, name: input.name, email: input.email, role: input.role, active: input.active };
       const user = input.action === 'create'
         ? await tx.user.create({ data: { ...values, password: password! }, select: userFields })
         : await tx.user.update({ where: { id: input.id }, data: values, select: userFields });
+      if(input.fullName)await tx.certificate.updateMany({where:{studentId:user.id,revokedAt:null},data:{studentName:input.fullName}});
       await tx.auditEvent.create({ data: { actorId: actor.id, action: `user.${input.action}`, entityType: 'user', entityId: user.id, metadata: { role: user.role, active: user.active } } });
       return user;
     });

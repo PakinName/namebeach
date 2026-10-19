@@ -1,3 +1,4 @@
+import { miniQuiz } from '@/lib/mini-quiz';
 import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -52,17 +53,18 @@ export async function PUT(request: Request, { params }: Context) {
       await tx.lesson.deleteMany({ where: { id: { in: removedLessons } } });
       await tx.chapter.deleteMany({ where: { id: { in: removedChapters.map(ch => ch.id) } } });
       for (const [orderIndex, ch] of chapters.entries()) {
-        const chapter = ch.id ? await tx.chapter.update({ where: { id: ch.id }, data: { title: ch.title, description: ch.description, orderIndex } }) : await tx.chapter.create({ data: { courseId: id, title: ch.title, description: ch.description, orderIndex } });
+        const chapter = ch.id ? await tx.chapter.update({ where: { id: ch.id }, data: { title: ch.title, description: ch.description, orderIndex } }) : await tx.chapter.create({ data: { courseId: id, title: ch.title, description: ch.description, orderIndex, quiz:{create:miniQuiz(ch.title)} } });
         for (const [index, { id: lessonId, ...lesson }] of ch.lessons.entries()) {
           if (lessonId) await tx.lesson.update({ where: { id: lessonId }, data: { ...lesson, orderIndex: index } });
           else await tx.lesson.create({ data: { ...lesson, chapterId: chapter.id, orderIndex: index } });
         }
         if (orderIndex === 0) await tx.studentProgress.updateMany({ where: { chapterId: chapter.id }, data: { unlocked: true } });
       }
+      if(fields.published && await tx.chapter.count({where:{courseId:id,OR:[{quiz:null},{quiz:{questions:{none:{active:true}}}}]}}))throw new Error('MISSING_QUIZ');
     }, { timeout: 30000 });
     return GET(request, { params: Promise.resolve({ id }) });
   } catch (error) {
     const code = error instanceof Error ? error.message : '';
-    return fail(['FORBIDDEN','CONFLICT','INVALID_COURSE','CONTENT_IN_USE'].includes(code) ? code : 'SAVE_FAILED', code === 'FORBIDDEN' ? 403 : ['CONFLICT','CONTENT_IN_USE'].includes(code) ? 409 : code === 'INVALID_COURSE' ? 400 : 500);
+    return fail(['FORBIDDEN','CONFLICT','INVALID_COURSE','CONTENT_IN_USE','MISSING_QUIZ'].includes(code) ? code : 'SAVE_FAILED', code === 'FORBIDDEN' ? 403 : ['CONFLICT','CONTENT_IN_USE'].includes(code) ? 409 : code === 'INVALID_COURSE' ? 400 : 500);
   }
 }

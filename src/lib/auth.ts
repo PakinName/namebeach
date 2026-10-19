@@ -21,7 +21,7 @@ export const authOptions: NextAuthOptions = {
         });
 
         const email = credentials.email.trim().toLowerCase().slice(0,254);
-        if (!user || !user.active) {
+        if (!user || !user.active || user.deletedAt) {
           await prisma.loginEvent.create({data:{email,userId:user?.id,outcome:'FAILED'}});
           throw new Error('Invalid email or password');
         }
@@ -36,6 +36,7 @@ export const authOptions: NextAuthOptions = {
           throw new Error('Invalid email or password');
         }
 
+        if (user.role === 'TEACHER' && user.teacherApproval !== 'APPROVED') throw new Error('บัญชีครูรออนุมัติจากแอดมิน / Teacher account awaiting approval');
         await prisma.loginEvent.create({data:{email,userId:user.id,outcome:'SUCCESS'}});
         return {
           id: user.id,
@@ -62,6 +63,7 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.role = user.role;
       }
+      if (token.id) { const current = await prisma.user.findUnique({where:{id:String(token.id)},select:{name:true,role:true,email:true,avatar:true}}); if(current){token.name=current.name;token.role=current.role;token.email=current.email;token.picture=current.avatar;} }
       return token;
     },
     async session({ session, token }) {
@@ -82,7 +84,7 @@ export const authOptions: NextAuthOptions = {
 export async function getActiveSession() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return null;
-  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { id: true, name: true, email: true, role: true, active: true } });
-  if (!user?.active) return null;
+  const user = await prisma.user.findUnique({ where: { id: session.user.id }, select: { id: true, name: true, email: true, role: true, active: true, teacherApproval: true, deletedAt: true, fullName: true, nickname: true } });
+  if (!user?.active || user.deletedAt || (user.role === 'TEACHER' && user.teacherApproval !== 'APPROVED')) return null;
   return { ...session, user: { ...session.user, ...user } };
 }

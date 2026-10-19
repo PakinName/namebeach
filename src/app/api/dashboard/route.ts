@@ -101,8 +101,9 @@ export async function GET() {
         }),
       ]);
 
-      const avgScore = quizAttempts.length > 0
-        ? Math.round(quizAttempts.reduce((sum, a) => sum + a.percentage, 0) / quizAttempts.length)
+      const gradedAttempts=quizAttempts.filter(a=>a.status==='GRADED');
+      const avgScore = gradedAttempts.length > 0
+        ? Math.round(gradedAttempts.reduce((sum, a) => sum + a.percentage, 0) / gradedAttempts.length)
         : 0;
 
       return NextResponse.json({
@@ -114,8 +115,8 @@ export async function GET() {
           activeClassrooms,
           averageQuizScore: avgScore,
           recentActivities: quizAttempts.map((a) => ({
-            type: a.passed ? 'quiz_passed' : 'quiz_failed',
-            message: `${a.student.name} scored ${a.percentage.toFixed(0)}% on ${a.quiz.title}`,
+            type: a.status==='PENDING'?'quiz_pending':a.passed ? 'quiz_passed' : 'quiz_failed',
+            message: a.status==='PENDING'?`${a.student.name} ส่งข้อเขียนรอตรวจ / Awaiting grading: ${a.quiz.title}`:`${a.student.name} scored ${a.percentage.toFixed(0)}% on ${a.quiz.title}`,
             createdAt: a.startedAt,
           })),
         },

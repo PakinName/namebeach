@@ -1,4 +1,7 @@
 export const thai: Record<string, string> = {
+  'Complete the lesson checkpoint above to continue.': 'ทำแบบทดสอบย่อยด้านบนให้ผ่านก่อน จึงไปเรื่องถัดไปได้',
+  'Next lesson': 'เรียนเรื่องถัดไป',
+  'Complete all lessons before the quiz': 'เรียนทุกเรื่องให้จบก่อนทำแบบทดสอบ',
   "A BETTER SPACE TO LEARN": "พื้นที่ดี ๆ สำหรับการเรียนรู้",
   "A FRESH START": "เริ่มต้นสิ่งใหม่",
   "A classroom that stays connected": "ห้องเรียนที่เชื่อมถึงกัน",

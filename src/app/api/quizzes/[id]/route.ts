@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getActiveSession } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { canAccessChapter } from '@/lib/progression';
+import { canTakeQuiz } from '@/lib/progression';
 
 // GET /api/quizzes/[id] — Get quiz with questions and options
 export async function GET(
@@ -25,6 +25,7 @@ export async function GET(
           },
         },
         questions: {
+          where:{active:true},
           orderBy: { orderIndex: 'asc' },
           include: {
             options: {
@@ -44,15 +45,14 @@ export async function GET(
 
     // Security: Check chapter access for students
     if (session.user.role === 'STUDENT') {
-      const hasAccess = await canAccessChapter(
+      const hasAccess = await canTakeQuiz(
         session.user.id,
-        quiz.chapter.courseId,
         quiz.chapterId
       );
 
       if (!hasAccess) {
         return NextResponse.json(
-          { success: false, error: 'Chapter is locked. Complete the previous chapter first.' },
+          { success: false, error: 'กรุณาเข้าร่วมคอร์สและเรียนทุกเรื่องในบทนี้ให้จบก่อนทำแบบทดสอบ / Join and complete every lesson in this chapter first.' },
           { status: 403 }
         );
       }
@@ -65,12 +65,13 @@ export async function GET(
         where: { quizId: id, studentId: session.user.id },
         orderBy: { startedAt: 'desc' },
         take: 5,
+        include:{answers:{select:{id:true,textAnswer:true,awardedPoints:true,feedback:true,question:{select:{questionText:true,points:true}}}}},
       });
     }
 
     return NextResponse.json({
       success: true,
-      data: { ...quiz, questions:quiz.questions.map(question=>({id:question.id,questionText:question.questionText,questionType:question.questionType,points:question.points,orderIndex:question.orderIndex,options:question.options})), attempts },
+      data: { ...quiz, revision:quiz.updatedAt.toISOString(), questions:quiz.questions.map(question=>({id:question.id,questionText:question.questionText,questionType:question.questionType,points:question.points,orderIndex:question.orderIndex,options:question.options})), attempts },
     });
   } catch (error) {
     console.error('Quiz GET error:', error);
